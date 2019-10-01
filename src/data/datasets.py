@@ -15,6 +15,8 @@ import pandas as pd
 
 from src.models.config import cfg
 from src.logging import log_utils
+from src.data.preprocess import load_voxel
+from src.models.utils import augment_voxel_tensor, rescale_voxel_tensor, convert_embedding_list_to_batch
 
 log = log_utils.logger(__name__)
 
@@ -157,80 +159,172 @@ class Dataset(data.Dataset):
         return len(self.filenames)
 
 
-class ShapeNetDataset(data.Dataset):
-    def __init__(self, data_dir, metadata_dir, split='train', embedding_type='cnn-rnn',
-                 imsize=64, transform=None, target_transform=None):
+# class ShapeNetDataset(data.Dataset):
+#     def __init__(self, data_dir, metadata_dir, split='train', embedding_type='cnn-rnn',
+#                  imsize=64, transform=None, target_transform=None):
+#
+#         self.transform = transform
+#         self.target_transform = target_transform
+#         self.imsize = imsize
+#         self.data = []
+#         self.data_dir = data_dir
+#         self.metadata_dir = metadata_dir
+#
+#         # Need to store list of filepaths
+#         # Need to store captions
+#         # Need to store embeddings
+#
+#         # self.filepaths = self.load_filepaths(split_dir)
+#         # self.embeddings = self.load_embedding(
+#         #     split_dir, embedding_type)
+#         # self.captions = self.load_all_captions()
+#
+#     def load_metadata(self, metadata_dir):
+#         """
+#         Adds all metadata annotations from CSV files and parses them into the dataset.
+#
+#         Arguments:
+#             metadata_dir (String): directory containing the CSV files to process
+#         """
+#         # Likely parse a single file into a dict
+#         # self.description = ...
+#         pass
+#
+#     # def __load_metadatum(self, metadata_file):
+#     #     """
+#     #     Adds all metadata annotations from CSV file and parses them into the dataset.
+#     #
+#     #     Arguments:
+#     #         metadata_file (String): CSV file to process
+#     #     """
+#
+#     def clean(self, overwrite=False):
+#         """
+#         Clean dataset according to rules (should not need to be called repeatedly).
+#         """
+#         for i in range(__len__()):
+#             # ... = __get__item(i)
+#             # Determine if it needs to be removed
+#             # If needs to be removed, remove from Dataset
+#                 # If needs to be overwritten, remove it from data_dir (using filepath)
+#             # Else save it to a cache directory
+#         pass
+#
+#     # def __clean(self, index, overwrite=False):
+#     #     return False
+#
+#     def save(self, cache_dir):
+#         for i in range(__len__()):
+#             # Save each item to the cache_dir
+#             pass
+#
+#     def generate_filepaths(self):
+#         # For every directory in data_dir:
+#             # For every directory in these directories:
+#                 # filepath = os.path.join(data_dir, ...)
+#                 # self.filepaths.append(filepath)
+#         return None
+#
+#     def load_filepaths(self, filepaths_file):
+#         # self.filepaths = ...
+#         pass
+#
+#     def __getitem__(self, index):
+#         # return voxels, embedding
+#         return None
+#
+#     def __len__(self):
+#         # return len(self.filepaths)
+#         return None
 
-        self.transform = transform
-        self.target_transform = target_transform
-        self.imsize = imsize
-        self.data = []
-        self.data_dir = data_dir
-        self.metadata_dir = metadata_dir
+class GANDataGenerator(data.Dataset):
+    """Data generator for GAN. Generators single items instead of minibatches.
+    """
 
-        # Need to store list of filepaths
-        # Need to store captions
-        # Need to store embeddings
+    def __init__(self, data_dict):
+        """Initialize the Data Generator.
 
-        # self.filepaths = self.load_filepaths(split_dir)
-        # self.embeddings = self.load_embedding(
-        #     split_dir, embedding_type)
-        # self.captions = self.load_all_captions()
-
-    def load_metadata(self, metadata_dir):
+        Args:
+            data_queue:
+            data_dict: A dict with keys 'caption_tuples' and 'caption_matches'. caption_tuples is
+                a list of caption tuples, where each caption tuple is (caption, model_category,
+                model_id). caption_matches is a dict where the key is any model ID and the value
+                is a list of the indices (ints) of caption tuples that describe the same model ID.
         """
-        Adds all metadata annotations from CSV files and parses them into the dataset.
+        if 'caption_tuples' in data_dict:
+            self.caption_tuples = data_dict['caption_tuples']
+        elif 'caption_embedding_tuples' in data_dict:
+            self.caption_tuples = data_dict['caption_embedding_tuples']
+        else:
+            raise KeyError('inputs dict does not contain proper keys.')
+        self.max_sentence_length = len(self.caption_tuples[0][0])
+        self.class_labels = data_dict.get('class_labels')
+        problematic_nrrd_path = os.path.join(cfg.PROCESSED_DATA_DIR, 'problematic_nrrds_shapenet_unverified_256_filtered_div_with_err_textures.p')
+        if problematic_nrrd_path is not None:
+            with open(problematic_nrrd_path, 'rb') as f:
+                self.bad_model_ids = pickle.load(f)
+        else:
+            self.bad_model_ids = None
+        # super(GANDataGenerator, self).__init__(data_queue=None, data_dict=data_dict, repeat=False)
 
-        Arguments:
-            metadata_dir (String): directory containing the CSV files to process
+    def is_bad_model_id(self, model_id):
+        """Code reuse.
         """
-        # Likely parse a single file into a dict
-        # self.description = ...
-        pass
+        if self.bad_model_ids is not None:
+            return model_id in self.bad_model_ids
+        else:
+            return False
 
-    # def __load_metadatum(self, metadata_file):
-    #     """
-    #     Adds all metadata annotations from CSV file and parses them into the dataset.
-    #
-    #     Arguments:
-    #         metadata_file (String): CSV file to process
-    #     """
+    def get_caption_data(self, db_ind):
+        """Gets the caption data corresponding to the index specified by db_ind.
 
-    def clean(self, overwrite=False):
+        NOTE: Copied directly from GANDataProcess.
+
+        Args:
+            db_ind: The integer index corresponding to the index of the caption in the dataset.
+
+        Returns:
+            cur_raw_embedding
+            cur_category
+            cur_model_id
+            cur_voxel_tensor
         """
-        Clean dataset according to rules (should not need to be called repeatedly).
-        """
-        for i in range(__len__()):
-            # ... = __get__item(i)
-            # Determine if it needs to be removed
-            # If needs to be removed, remove from Dataset
-                # If needs to be overwritten, remove it from data_dir (using filepath)
-            # Else save it to a cache directory
-        pass
+        while True:
+            caption_tuple = self.caption_tuples[db_ind]
+            cur_raw_embedding = caption_tuple[0].astype(np.float32)
+            cur_raw_embedding = cur_raw_embedding / np.linalg.norm(cur_raw_embedding)
+            cur_category = caption_tuple[1]
+            cur_model_id = caption_tuple[2]
 
-    # def __clean(self, index, overwrite=False):
-    #     return False
+            if self.is_bad_model_id(cur_model_id):
+                db_ind = np.random.randint(self.num_data)  # Choose new caption
+                continue
 
-    def save(self, cache_dir):
-        for i in range(__len__()):
-            # Save each item to the cache_dir
-            pass
+            try:
+                # cur_learned_embedding = self.get_learned_embedding(caption_tuple)
+                cur_voxel_tensor = load_voxel(cur_category, cur_model_id)
+                cur_voxel_tensor = augment_voxel_tensor(cur_voxel_tensor,
+                                                        # max_noise=cfg.TRAIN.AUGMENT_MAX)
+                                                        max_noise=0)
+                # Reshape from (H x W x D x C) to (C x H x W x D)
+                cur_voxel_tensor = np.transpose(cur_voxel_tensor, (3, 0, 1, 2))
+                # if self.class_labels is not None:
+                #     cur_class_label = self.class_labels[cur_category]
+                # else:
+                #     cur_class_label = None
 
-    def generate_filepaths(self):
-        # For every directory in data_dir:
-            # For every directory in these directories:
-                # filepath = os.path.join(data_dir, ...)
-                # self.filepaths.append(filepath)
-        return None
-
-    def load_filepaths(self, filepaths_file):
-        # self.filepaths = ...
-        pass
+            except FileNotFoundError:  # Retry if we don't have binvoxes
+                db_ind = np.random.randint(self.num_data)
+                continue
+            break
+        caption_data = {'raw_embedding': cur_raw_embedding,
+                        # 'category': cur_category,
+                        # 'model_id': cur_model_id,
+                        'voxel_tensor': cur_voxel_tensor}
+        return caption_data
 
     def __getitem__(self, index):
-        # return voxels, embedding
-        return None
+        return self.get_caption_data(index)
 
     def __len__(self):
-        # return len(self.filepaths)
-        return None
+        return len(self.caption_tuples)

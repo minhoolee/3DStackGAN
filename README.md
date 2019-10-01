@@ -1,6 +1,17 @@
 3DStackGAN
 ==============================
 
+## Project description
+The following is a short introduction to this research project.
+[Please see the longer report](https://docs.google.com/document/d/1OP59s-Z2e63OKDw849AJqO0OeB0ZcRVRZkA9VPiX0Qo/edit?usp=sharing).
+
+This is a research project I conducted under the mentorship of professor [Julian McAuley](https://cseweb.ucsd.edu/~jmcauley/)
+in my winter quarter of freshman year at UC San Diego. I applied a stacked
+GAN architecture to 3D voxels from the ShapeNet datase to produce high-fidelity
+fake models. I spent a total of around 10 weeks on the project and would like 
+to continue to work on it in the future. Some results can be seen in the
+report in the subsection Experiments > Analysis of Generations.
+
 Project Organization
 ------------
 
@@ -16,6 +27,7 @@ Project Organization
     ├── docs                      <- A default Sphinx project; see sphinx-doc.org for details
     │
     ├── models                    <- Trained and serialized models, model predictions, or model summaries
+    │   ├── cfg                   <- CFG files for models
     │   ├── csv                   <- CSV logs of epoch and batch runs
     │   ├── json                  <- JSON representation of the models
     │   ├── predictions           <- Predictions generated the train models and their best weights

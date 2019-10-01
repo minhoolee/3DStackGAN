@@ -20,17 +20,17 @@ def main(input_dir, output_dir):
 
     # Load the dataset metadata (CSV) into memory
     log.info("Loading dataset metadata")
-    data_dir = input_dir
-    metadata_dir = os.path.join(input_dir, 'csv')
-    dataset = ShapeNetDataset(data_dir, metadata_dir)
-
-    # Clean the dataset (follow the rules)
-    log.info("Cleaning dataset")
-    dataset.clean()
-
-    # Save the cleaned dataset to output directory
-    log.info("Saving cleaned dataset")
-    dataset.save(output_dir)
+    # data_dir = input_dir
+    # metadata_dir = os.path.join(input_dir, 'csv')
+    # dataset = ShapeNetDataset(data_dir, metadata_dir)
+    #
+    # # Clean the dataset (follow the rules)
+    # log.info("Cleaning dataset")
+    # dataset.clean()
+    #
+    # # Save the cleaned dataset to output directory
+    # log.info("Saving cleaned dataset")
+    # dataset.save(output_dir)
 
 
 if __name__ == '__main__':

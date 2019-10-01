@@ -16,14 +16,16 @@ import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
-from tensorboard import summary
-from tensorboard import FileWriter
+from tensorboardX import summary
+from tensorboardX import FileWriter
+from tqdm import tqdm
 
-from src.data.datasets import Dataset
+from src.data.datasets import Dataset, GANDataGenerator
 from src.models.config import cfg, cfg_from_file
 from src.models.utils import mkdir_p
+from src.models.utils import open_pickle
 from src.models.utils import weights_init
-from src.models.utils import save_img_results, save_model
+from src.models.utils import save_voxels_results, save_model
 from src.models.utils import KL_loss
 from src.models.utils import compute_discriminator_loss, compute_generator_loss
 from src.logging import log_utils
@@ -39,10 +41,10 @@ class StackedGAN(object):
     def __init__(self, output_dir):
         if cfg.TRAIN.FLAG:
             self.model_dir = os.path.join(output_dir, 'Model')
-            self.image_dir = os.path.join(output_dir, 'Image')
+            self.voxels_dir = os.path.join(output_dir, 'Voxels')
             self.log_dir = os.path.join(output_dir, 'Log')
             mkdir_p(self.model_dir)
-            mkdir_p(self.image_dir)
+            mkdir_p(self.voxels_dir)
             mkdir_p(self.log_dir)
             self.summary_writer = FileWriter(self.log_dir)
 
@@ -61,23 +63,23 @@ class StackedGAN(object):
         from src.models.create_model import STAGE1_G, STAGE1_D
         netG = STAGE1_G()
         netG.apply(weights_init)
-        log.info(netG)
+        # log.info(netG)
         netD = STAGE1_D()
         netD.apply(weights_init)
-        log.info(netD)
+        # log.info(netD)
 
         if cfg.NET_G != '':
             state_dict = \
                 torch.load(cfg.NET_G,
                            map_location=lambda storage, loc: storage)
             netG.load_state_dict(state_dict)
-            log.info('Load from: ', cfg.NET_G)
+            log.info('Load from: {}'.format(cfg.NET_G))
         if cfg.NET_D != '':
             state_dict = \
                 torch.load(cfg.NET_D,
                            map_location=lambda storage, loc: storage)
             netD.load_state_dict(state_dict)
-            log.info('Load from: ', cfg.NET_D)
+            log.info('Load from: {}'.format(cfg.NET_D))
         if cfg.CUDA:
             netG.cuda()
             netD.cuda()
@@ -90,19 +92,19 @@ class StackedGAN(object):
         Stage1_G = STAGE1_G()
         netG = STAGE2_G(Stage1_G)
         netG.apply(weights_init)
-        log.info(netG)
+        # log.info(netG)
         if cfg.NET_G != '':
             state_dict = \
                 torch.load(cfg.NET_G,
                            map_location=lambda storage, loc: storage)
             netG.load_state_dict(state_dict)
-            log.info('Load from: ', cfg.NET_G)
+            log.info('Load from: {}'.format(cfg.NET_G))
         elif cfg.STAGE1_G != '':
             state_dict = \
                 torch.load(cfg.STAGE1_G,
                            map_location=lambda storage, loc: storage)
             netG.STAGE1_G.load_state_dict(state_dict)
-            log.info('Load from: ', cfg.STAGE1_G)
+            log.info('Load from: {}'.format(cfg.STAGE1_G))
         else:
             log.info("Please give the Stage1_G path")
             return
@@ -114,8 +116,8 @@ class StackedGAN(object):
                 torch.load(cfg.NET_D,
                            map_location=lambda storage, loc: storage)
             netD.load_state_dict(state_dict)
-            log.info('Load from: ', cfg.NET_D)
-        log.info(netD)
+            log.info('Load from: {}'.format(cfg.NET_D))
+        # log.info(netD)
 
         if cfg.CUDA:
             netG.cuda()
@@ -165,23 +167,24 @@ class StackedGAN(object):
                 for param_group in optimizerD.param_groups:
                     param_group['lr'] = discriminator_lr
 
-            for i, data in enumerate(data_loader, 0):
+            for i, data in enumerate(tqdm(iter(data_loader), leave=False, total=len(data_loader)), 0):
                 ######################################################
                 # (1) Prepare training data
                 ######################################################
-                real_img_cpu, txt_embedding = data
-                real_imgs = Variable(real_img_cpu)
-                txt_embedding = Variable(txt_embedding)
+                real_voxels_cpu = data['voxel_tensor']
+                txt_embeddings = data['raw_embedding']
+                real_voxels = Variable(real_voxels_cpu)
+                txt_embeddings = Variable(txt_embeddings)
                 if cfg.CUDA:
-                    real_imgs = real_imgs.cuda()
-                    txt_embedding = txt_embedding.cuda()
+                    real_voxels = real_voxels.cuda()
+                    txt_embeddings = txt_embeddings.cuda()
 
                 #######################################################
-                # (2) Generate fake images
+                # (2) Generate fake voxels
                 ######################################################
                 noise.data.normal_(0, 1)
-                inputs = (txt_embedding, noise)
-                _, fake_imgs, mu, logvar = \
+                inputs = (txt_embeddings, noise)
+                _, fake_voxels, mu, logvar = \
                     nn.parallel.data_parallel(netG, inputs, self.gpus)
 
                 ############################
@@ -189,7 +192,7 @@ class StackedGAN(object):
                 ###########################
                 netD.zero_grad()
                 errD, errD_real, errD_wrong, errD_fake = \
-                    compute_discriminator_loss(netD, real_imgs, fake_imgs,
+                    compute_discriminator_loss(netD, real_voxels, fake_voxels,
                                                real_labels, fake_labels,
                                                mu, self.gpus)
                 errD.backward()
@@ -198,7 +201,7 @@ class StackedGAN(object):
                 # (2) Update G network
                 ###########################
                 netG.zero_grad()
-                errG = compute_generator_loss(netD, fake_imgs,
+                errG = compute_generator_loss(netD, fake_voxels,
                                               real_labels, mu, self.gpus)
                 kl_loss = KL_loss(mu, logvar)
                 errG_total = errG + kl_loss * cfg.TRAIN.COEFF.KL
@@ -221,13 +224,15 @@ class StackedGAN(object):
                     self.summary_writer.add_summary(summary_G, count)
                     self.summary_writer.add_summary(summary_KL, count)
 
-                    # save the image result for each epoch
-                    inputs = (txt_embedding, fixed_noise)
+                    # save the voxels result for each epoch
+                    inputs = (txt_embeddings, fixed_noise)
                     lr_fake, fake, _, _ = \
                         nn.parallel.data_parallel(netG, inputs, self.gpus)
-                    save_img_results(real_img_cpu, fake, epoch, self.image_dir)
+                    save_voxels_results(
+                        real_voxels_cpu, fake, epoch, self.voxels_dir)
                     if lr_fake is not None:
-                        save_img_results(None, lr_fake, epoch, self.image_dir)
+                        save_voxels_results(
+                            None, lr_fake, epoch, self.voxels_dir)
             end_t = time.time()
             log.info('''[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f Loss_KL: %.4f
                      Loss_real: %.4f Loss_wrong:%.4f Loss_fake %.4f
@@ -277,20 +282,20 @@ class StackedGAN(object):
                 count = num_embeddings - batch_size
             embeddings_batch = embeddings[count:iend]
             # captions_batch = captions_list[count:iend]
-            txt_embedding = Variable(torch.FloatTensor(embeddings_batch))
+            txt_embeddings = Variable(torch.FloatTensor(embeddings_batch))
             if cfg.CUDA:
-                txt_embedding = txt_embedding.cuda()
+                txt_embeddings = txt_embeddings.cuda()
 
             #######################################################
-            # (2) Generate fake images
+            # (2) Generate fake voxels
             ######################################################
             noise.data.normal_(0, 1)
-            inputs = (txt_embedding, noise)
-            _, fake_imgs, mu, logvar = \
+            inputs = (txt_embeddings, noise)
+            _, fake_voxels, mu, logvar = \
                 nn.parallel.data_parallel(netG, inputs, self.gpus)
             for i in range(batch_size):
                 save_name = '%s/%d.png' % (save_dir, count + i)
-                im = fake_imgs[i].data.cpu().numpy()
+                im = fake_voxels[i].data.cpu().numpy()
                 im = (im + 1.0) * 127.5
                 im = im.astype(np.uint8)
                 # log.info('im', im.shape)
@@ -320,12 +325,12 @@ if __name__ == "__main__":
         cfg_from_file(args.cfg_file)
     if args.gpu_id != -1:
         cfg.GPU_ID = args.gpu_id
-    if args.data_dir != '':
-        cfg.DATA_DIR = args.data_dir
+    # if args.data_dir != '':
+    #     cfg.DATA_DIR = args.data_dir
     if args.output_dir != '':
         cfg.OUTPUT_DIR = args.output_dir
-    log.info('Using config:')
-    log.info(pprint.pformat(cfg))
+    # log.info('Using config:')
+    # log.info(pprint.pformat(cfg))
     if args.manualSeed is None:
         args.manualSeed = random.randint(1, 10000)
     random.seed(args.manualSeed)
@@ -339,14 +344,18 @@ if __name__ == "__main__":
 
     num_gpu = len(cfg.GPU_ID.split(','))
     if cfg.TRAIN.FLAG:
-        image_transform = transforms.Compose([
-            transforms.RandomCrop(cfg.IMSIZE),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        dataset = Dataset(cfg.DATA_DIR, 'train',
-                          imsize=cfg.IMSIZE,
-                          transform=image_transform)
+        # image_transform = transforms.Compose([
+        #     transforms.RandomCrop(cfg.IMSIZE),
+        #     transforms.RandomHorizontalFlip(),
+        #     transforms.ToTensor(),
+        #     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+        # dataset = Dataset(cfg.DATA_DIR, 'train',
+        #                   imsize=cfg.IMSIZE,
+        #                   transform=image_transform)
+        train_embeddings_path = os.path.join(
+            cfg.PROCESSED_DATA_DIR, 'processed_captions_train.p')
+        train_input_dict = open_pickle(train_embeddings_path)
+        dataset = GANDataGenerator(train_input_dict)
         assert dataset
         dataloader = torch.utils.data.DataLoader(
             dataset, batch_size=cfg.TRAIN.BATCH_SIZE * num_gpu,
@@ -354,7 +363,7 @@ if __name__ == "__main__":
 
         algo = StackedGAN(output_dir)
         algo.train(dataloader, cfg.STAGE)
-    else:
-        datapath = '%s/metadata/val/val_captions.t7' % (cfg.DATA_DIR)
-        algo = StackedGAN(output_dir)
-        algo.sample(datapath, cfg.STAGE)
+    # else:
+    #     datapath = '%s/metadata/val/val_captions.t7' % (cfg.DATA_DIR)
+    #     algo = StackedGAN(output_dir)
+    #     algo.sample(datapath, cfg.STAGE)

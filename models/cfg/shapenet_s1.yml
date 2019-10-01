@@ -1,23 +1,24 @@
-CONFIG_NAME: 'stageII'
+CONFIG_NAME: 'stageI'
 
-DATASET_NAME: 'coco'
+DATASET_NAME: 'shapenet'
 EMBEDDING_TYPE: 'cnn-rnn'
 GPU_ID: '0'
 Z_DIM: 100
-STAGE1_G: 'models/output/coco_stageI_2019_02_22_17_17_05/Model/netG_epoch_90.pth'
-# DATA_DIR: 'data/raw/coco/2014/'
 RAW_DATA_DIR: 'data/raw/shapenet/nrrd_256_filter_div_32_solid'
 PROCESSED_DATA_DIR: 'data/processed/shapenet'
 OUTPUT_DIR: 'models/output/'
-IMSIZE: 256
-WORKERS: 4
-STAGE: 2
+IMSIZE: 32
+WORKERS: 0
+STAGE: 1
+NET_G: 'models/output_saved/shapenet_stageI_2019_03_12_14_41_59/Model/netG_epoch_10.pth'
+NET_D: 'models/output_saved/shapenet_stageI_2019_03_12_14_41_59/Model/netD_epoch_last.pth'
+VIS_COUNT: 10
 TRAIN:
     FLAG: True
-    BATCH_SIZE: 10
-    MAX_EPOCH: 100
+    BATCH_SIZE: 35
+    MAX_EPOCH: 120
     LR_DECAY_EPOCH: 20
-    SNAPSHOT_INTERVAL: 5
+    SNAPSHOT_INTERVAL: 1
     DISCRIMINATOR_LR: 0.0002
     GENERATOR_LR: 0.0002
     COEFF:
@@ -26,8 +27,7 @@ TRAIN:
 GAN:
     CONDITION_DIM: 128
     DF_DIM: 96
-    GF_DIM: 192
-    R_NUM: 2
+    GF_DIM: 96
 
 TEXT:
     DIMENSION: 96

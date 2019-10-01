@@ -1,6 +1,7 @@
 from __future__ import division
 from __future__ import print_function
 
+import os
 import os.path as osp
 import numpy as np
 from easydict import EasyDict as edict
@@ -20,9 +21,11 @@ __C.WORKERS = 4
 __C.NET_G = ''
 __C.NET_D = ''
 __C.STAGE1_G = ''
-__C.DATA_DIR = ''
+__C.PROCESSED_DATA_DIR = ''
+__C.RAW_DATA_DIR = ''
+__C.PROBLEMATIC_NRRD_PATH = os.path.join(__C.PROCESSED_DATA_DIR, 'problematic_nrrds_shapenet_unverified_256_filtered_div_with_err_textures.p')
 __C.OUTPUT_DIR = ''
-__C.VIS_COUNT = 64
+__C.VIS_COUNT = 5
 
 __C.Z_DIM = 100
 __C.IMSIZE = 64
@@ -52,7 +55,7 @@ __C.GAN.GF_DIM = 128
 __C.GAN.R_NUM = 4
 
 __C.TEXT = edict()
-__C.TEXT.DIMENSION = 1024
+__C.TEXT.DIMENSION = 96
 
 
 def _merge_a_into_b(a, b):
